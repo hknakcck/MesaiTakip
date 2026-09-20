@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Mesai Takip"/>
+<meta name="theme-color" content="#0f172a"/>
+<title>Mesai Takip</title>
+<script>
+const md={name:"Mesai Takip",short_name:"Mesai",display:"standalone",background_color:"#0f172a",theme_color:"#1e40af",orientation:"portrait",start_url:".",icons:[{src:"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='32' fill='%231e40af'/%3E%3Ctext x='96' y='130' font-size='100' text-anchor='middle' fill='white'%3E%E2%8F%B0%3C/text%3E%3C/svg%3E",sizes:"192x192",type:"image/svg+xml"}]};
+document.write('<link rel="manifest" href="'+URL.createObjectURL(new Blob([JSON.stringify(md)],{type:"application/json"}))+'">')
+</script>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='32' fill='%231e40af'/%3E%3Ctext x='96' y='130' font-size='100' text-anchor='middle' fill='white'%3E%E2%8F%B0%3C/text%3E%3C/svg%3E"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{background:#0f172a;overscroll-behavior:none;}
+input,textarea,button,label{touch-action:manipulation;}
+input,textarea{-webkit-user-select:text;user-select:text;font-family:'Segoe UI',sans-serif;}
+@keyframes spin{to{transform:rotate(360deg);}}
+@keyframes slideDown{from{opacity:0;transform:translateY(-12px);}to{opacity:1;transform:translateY(0);}}
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
+input[type=number]{-moz-appearance:textfield;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const _w=console.warn.bind(console);
+console.warn=(...a)=>{if(a[0]&&a[0].includes&&a[0].includes('Babel'))return;_w(...a);};
+if('serviceWorker' in navigator){
+  const c=`self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('fetch',e=>e.respondWith(fetch(e.request).catch(()=>new Response(''))));`;
+  navigator.serviceWorker.register(URL.createObjectURL(new Blob([c],{type:'text/javascript'}))).catch(()=>{});
+}
+</script>
+<script type="text/babel">
+const {useState,useMemo,useEffect,useCallback,useRef}=React;
+
+const VERI_KEY="mesai_veri";
+const AYAR_KEY="mesai_ayar";
+const VARSAYILAN={maas:57150,aylikGun:30,gunlukSaat:7.5,limit50:60.5,limit100:30};
+
+const SABIT_TATIL=["01-01","04-23","05-01","05-19","07-15","08-30","10-29"];
+const DINI_TATIL=new Set([
+  "2025-03-30","2025-03-31","2025-04-01",
+  "2025-06-06","2025-06-07","2025-06-08","2025-06-09",
+  "2026-03-19","2026-03-20","2026-03-21",
+  "2026-05-27","2026-05-28","2026-05-29","2026-05-30",
+]);
+
+const TIPLER={
+  calismadam:{label:"Çalışmadım",renk:"#64748b",carpan:0},
+  yuzde50:   {label:"%50 Mesai", renk:"#f59e0b",carpan:1.5},
+  yuzde100:  {label:"%100 Mesai",renk:"#ef4444",carpan:2.0},
+};
+
+const TODAY=new Date();
+function pad(n){return String(n).padStart(2,"0");}
+const todayKey=`${TODAY.getFullYear()}-${pad(TODAY.getMonth()+1)}-${pad(TODAY.getDate())}`;
+function gunSay(y,m){return new Date(y,m+1,0).getDate();}
+function ilkGun(y,m){const d=new Date(y,m,1).getDay();return d===0?6:d-1;}
+function haftaGunu(y,m,d){return new Date(y,m,d).getDay();}
+function isPazar(y,m,d){return haftaGunu(y,m,d)===0;}
+function isCumartesi(y,m,d){return haftaGunu(y,m,d)===6;}
+function fmt(n){return n.toLocaleString("tr-TR",{minimumFractionDigits:2,maximumFractionDigits:2});}
+function gKey(y,m,d){return `${y}-${pad(m+1)}-${pad(d)}`;}
+function isResmiTatil(y,m,d){return SABIT_TATIL.includes(`${pad(d)}-${pad(m+1)}`)||DINI_TATIL.has(`${y}-${pad(m+1)}-${pad(d)}`);}
+function isYuzde100Gun(y,m,d){return isPazar(y,m,d)||isResmiTatil(y,m,d);}
+function defaultTip(y,m,d){return isYuzde100Gun(y,m,d)?"yuzde100":"yuzde50";}
+function otoRenk(tip,saat){
+  if(tip==="calismadam")return "#64748b";
+  if(tip==="yuzde100")  return "#ef4444";
+  if(saat<=2)return "#fbbf24";
+  if(saat<=4)return "#f97316";
+  return "#22c55e";
+}
+
+const navBtn={background:"#1e293b",border:"1.5px solid #334155",color:"#e2e8f0",borderRadius:10,width:38,height:38,fontSize:18,cursor:"pointer"};
+
+/* ===== AYARLAR ===== */
+function AyarlarEkrani({ayar,onKaydet,onGeri}){
+  const [tmp,setTmp]=useState({...ayar});
+  const incr=(k,ad,mn,mx)=>setTmp(a=>({...a,[k]:Math.min(mx,parseFloat((a[k]+ad).toFixed(2)))}));
+  const decr=(k,ad,mn,mx)=>setTmp(a=>({...a,[k]:Math.max(mn,parseFloat((a[k]-ad).toFixed(2)))}));
+  const alanlar=[
+    {k:"maas",       label:"Aylık Maaş (₺)",          ad:50,  mn:1000,  mx:999999},
+    {k:"aylikGun",   label:"Aylık Gün Sayısı",         ad:1,   mn:20,    mx:31},
+    {k:"gunlukSaat", label:"Günlük Çalışma Saati",     ad:0.5, mn:1,     mx:12},
+    {k:"limit50",    label:"%50 Mesai Limiti (saat)",  ad:0.5, mn:1,     mx:300},
+    {k:"limit100",   label:"%100 Mesai Limiti (saat)", ad:0.5, mn:1,     mx:300},
+  ];
+  const onizG=tmp.maas/tmp.aylikGun;
+  const onizS=onizG/tmp.gunlukSaat;
+  return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0f172a,#1e293b)",fontFamily:"'Segoe UI',sans-serif",color:"#e2e8f0",paddingBottom:60}}>
+      <div style={{background:"linear-gradient(90deg,#1e40af,#0ea5e9)",padding:"24px 20px 20px"}}>
+        <div style={{maxWidth:500,margin:"0 auto",display:"flex",alignItems:"center",gap:14}}>
+          <button onClick={onGeri} style={{background:"#ffffff25",border:"none",color:"#fff",borderRadius:10,width:38,height:38,fontSize:20,cursor:"pointer",flexShrink:0}}>←</button>
+          <div>
+            <div style={{fontSize:10,letterSpacing:3,textTransform:"uppercase",opacity:.7}}>Yapılandırma</div>
+            <div style={{fontSize:20,fontWeight:800}}>⚙️ Ayarlar</div>
+          </div>
+        </div>
+      </div>
+      <div style={{maxWidth:500,margin:"0 auto",padding:"20px 16px"}}>
+        {alanlar.map(({k,label,ad,mn,mx})=>(
+          <div key={k} style={{background:"#1e293b",border:"1.5px solid #334155",borderRadius:14,padding:"16px",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:700,marginBottom:12}}>{label}</div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <button onClick={()=>decr(k,ad,mn,mx)} style={{width:44,height:44,background:"#0f172a",border:"1.5px solid #475569",color:"#e2e8f0",borderRadius:10,fontSize:22,cursor:"pointer",fontWeight:700,flexShrink:0}}>−</button>
+              <input type="number" value={tmp[k]} onChange={e=>setTmp(a=>({...a,[k]:parseFloat(e.target.value)||0}))}
+                style={{flex:1,background:"#0f172a",border:"1.5px solid #475569",color:"#38bdf8",borderRadius:10,padding:"10px 8px",fontSize:20,fontWeight:900,textAlign:"center",width:"100%"}}/>
+              <button onClick={()=>incr(k,ad,mn,mx)} style={{width:44,height:44,background:"#0f172a",border:"1.5px solid #475569",color:"#e2e8f0",borderRadius:10,fontSize:22,cursor:"pointer",fontWeight:700,flexShrink:0}}>+</button>
+            </div>
+          </div>
+        ))}
+        <div style={{background:"#1e293b",border:"1.5px solid #0ea5e944",borderRadius:14,padding:"16px",marginBottom:16}}>
+          <div style={{fontSize:10,color:"#64748b",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>📊 Önizleme</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {[["Günlük",fmt(onizG)+" ₺"],["Saatlik",fmt(onizS)+" ₺"],["%50/s",fmt(onizS*1.5)+" ₺"],["%100/s",fmt(onizS*2)+" ₺"]].map(([l,v])=>(
+              <div key={l} style={{background:"#0f172a",borderRadius:10,padding:"10px 12px"}}>
+                <div style={{fontSize:10,color:"#64748b"}}>{l}</div>
+                <div style={{fontSize:14,fontWeight:800,color:"#38bdf8",marginTop:3}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <button onClick={()=>onKaydet(tmp)} style={{width:"100%",padding:"15px",borderRadius:12,background:"linear-gradient(90deg,#1e40af,#0ea5e9)",color:"#fff",fontWeight:800,fontSize:16,border:"none",cursor:"pointer",marginBottom:10}}>✓ Kaydet</button>
+        <button onClick={()=>setTmp({...VARSAYILAN})} style={{width:"100%",padding:"12px",borderRadius:12,background:"transparent",color:"#64748b",fontWeight:700,fontSize:13,border:"1.5px solid #334155",cursor:"pointer"}}>Varsayılana Sıfırla</button>
+      </div>
+    </div>
+  );
+}
+
+/* ===== ANA UYGULAMA ===== */
+function App(){
+  const [year,    setYear]   =useState(TODAY.getFullYear());
+  const [month,   setMonth]  =useState(TODAY.getMonth());
+  const [gunler,  setGunler] =useState({});
+  const [secili,  setSecili] =useState(null);
+  const [mSaat,   setMSaat]  =useState(8);
+  const [mSaatStr,setMSaatStr]=useState("8");
+  const [mTip,    setMTip]   =useState("yuzde50");
+  const [mNot,    setMNot]   =useState("");
+  const [yukl,    setYukl]   =useState(true);
+  const [bildi,   setBildi]  =useState(null);
+  const [ayarlar, setAyarlar]=useState(VARSAYILAN);
+  const [ayarAc,  setAyarAc] =useState(false);
+  const formRef=useRef(null);
+
+  const MAAS         =ayarlar.maas;
+  const GUNLUK_MAAS  =MAAS/ayarlar.aylikGun;
+  const SAATLIK_UCRET=GUNLUK_MAAS/ayarlar.gunlukSaat;
+
+  useEffect(()=>{
+    try{
+      const v=localStorage.getItem(VERI_KEY);if(v)setGunler(JSON.parse(v));
+      const a=localStorage.getItem(AYAR_KEY);if(a)setAyarlar(JSON.parse(a));
+    }catch(e){}
+    setYukl(false);
+  },[]);
+
+  const kaydetLS=useCallback((yeni)=>{
+    try{localStorage.setItem(VERI_KEY,JSON.stringify(yeni));setBildi("ok");setTimeout(()=>setBildi(null),2000);}
+    catch(e){setBildi("err");setTimeout(()=>setBildi(null),3000);}
+  },[]);
+
+  function ayarlariKaydet(yeni){
+    setAyarlar(yeni);localStorage.setItem(AYAR_KEY,JSON.stringify(yeni));
+    setBildi("ok");setTimeout(()=>setBildi(null),2000);setAyarAc(false);
+  }
+
+  const daysInMonth=gunSay(year,month);
+  const startOffset=ilkGun(year,month);
+  const ayAdi=new Date(year,month,1).toLocaleString("tr-TR",{month:"long",year:"numeric"});
+  const gk=(d)=>gKey(year,month,d);
+
+  function gunAc(day){
+    // Aynı güne tekrar basınca kapat
+    if(secili===day){setSecili(null);return;}
+    const m=gunler[gk(day)];
+    const tip=m?.tip||defaultTip(year,month,day);
+    const saat=m?.saat||8;
+    setSecili(day);
+    setMTip(tip);
+    setMSaat(saat);
+    setMSaatStr(String(saat));
+    setMNot(m?.not||"");
+    // Forma scroll et
+    setTimeout(()=>{
+      formRef.current?.scrollIntoView({behavior:"smooth",block:"start"});
+    },100);
+  }
+
+  function saatDegis(val){
+    setMSaatStr(val);
+    const n=parseFloat(val);
+    if(!isNaN(n)&&n>=0.5&&n<=24)setMSaat(n);
+  }
+
+  function saatBlur(){
+    const n=parseFloat(mSaatStr);
+    if(isNaN(n)||n<0.5){setMSaat(0.5);setMSaatStr("0.5");}
+    else if(n>24){setMSaat(24);setMSaatStr("24");}
+    else{const r=Math.round(n*2)/2;setMSaat(r);setMSaatStr(String(r));}
+  }
+
+  function kaydet(){
+    if(!secili)return;
+    const kayit={tip:mTip,saat:mTip==="calismadam"?0:mSaat};
+    if(mNot.trim())kayit.not=mNot.trim();
+    const yeni={...gunler,[gk(secili)]:kayit};
+    setGunler(yeni);kaydetLS(yeni);setSecili(null);
+  }
+
+  function silGun(){
+    if(!secili)return;
+    const yeni={...gunler};delete yeni[gk(secili)];
+    setGunler(yeni);kaydetLS(yeni);setSecili(null);
+  }
+
+  function disaAktar(){
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([JSON.stringify(gunler,null,2)],{type:"application/json"}));
+    a.download=`mesai-${new Date().toISOString().slice(0,10)}.json`;a.click();
+  }
+
+  function iceAktar(e){
+    const f=e.target.files[0];if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>{try{const v=JSON.parse(ev.target.result);setGunler(v);kaydetLS(v);}catch{alert("Geçersiz dosya!");}};
+    r.readAsText(f);e.target.value="";
+  }
+
+  function ayGec(d){
+    let m=month+d,y=year;
+    if(m<0){m=11;y--;}if(m>11){m=0;y++;}
+    setMonth(m);setYear(y);setSecili(null);
+  }
+
+  const hesap=useMemo(()=>{
+    let toplamMesai=0,y50s=0,y100s=0,y50u=0,y100u=0,cGun=0;
+    const gh={};
+    for(let d=1;d<=daysInMonth;d++){
+      const k=gk(d),kayit=gunler[k];if(!kayit)continue;
+      if(kayit.tip==="calismadam"){cGun++;gh[k]={ucret:0,saat:0,tip:"calismadam"};continue;}
+      const tip=TIPLER[kayit.tip];
+      const ucret=SAATLIK_UCRET*tip.carpan*kayit.saat;
+      gh[k]={ucret,saat:kayit.saat,tip:kayit.tip};
+      toplamMesai+=ucret;
+      if(kayit.tip==="yuzde50"){y50s+=kayit.saat;y50u+=ucret;}
+      if(kayit.tip==="yuzde100"){y100s+=kayit.saat;y100u+=ucret;}
+    }
+    const buffer=Math.max(0,daysInMonth-ayarlar.aylikGun);
+    const netDevamsiz=Math.max(0,cGun-buffer);
+    const dus=netDevamsiz*GUNLUK_MAAS;
+    return{toplam:toplamMesai-dus,toplamMesai,gh,y50s,y100s,y50u,y100u,cGun,netDevamsiz,dus,buffer};
+  },[gunler,year,month,daysInMonth,GUNLUK_MAAS,SAATLIK_UCRET,ayarlar.aylikGun]);
+
+  const hakEdis=MAAS+hesap.toplam;
+
+  if(yukl)return(
+    <div style={{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+      <div style={{width:40,height:40,border:"3px solid #334155",borderTop:"3px solid #0ea5e9",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
+      <div style={{color:"#64748b",fontSize:14}}>Yükleniyor...</div>
+    </div>
+  );
+
+  if(ayarAc)return(<AyarlarEkrani ayar={ayarlar} onKaydet={ayarlariKaydet} onGeri={()=>setAyarAc(false)}/>);
+
+  const seciRenk=secili?otoRenk(mTip,mSaat):"#38bdf8";
+  const tahmini=secili&&mTip!=="calismadam"?SAATLIK_UCRET*TIPLER[mTip].carpan*mSaat:0;
+  const seciPazar=secili&&isPazar(year,month,secili);
+  const seciTatil=secili&&isResmiTatil(year,month,secili);
+  const seciCmt=secili&&isCumartesi(year,month,secili);
+  const seciOzel=seciPazar||seciTatil;
+
+  return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0f172a,#1e293b)",fontFamily:"'Segoe UI',sans-serif",color:"#e2e8f0",paddingBottom:80}}>
+
+      {/* Bildirim */}
+      {bildi&&(
+        <div style={{position:"fixed",bottom:20,right:16,zIndex:99,padding:"10px 16px",borderRadius:10,
+          background:bildi==="ok"?"#16a34a22":"#ef444422",
+          border:`1px solid ${bildi==="ok"?"#16a34a88":"#ef444488"}`,
+          color:bildi==="ok"?"#4ade80":"#ef4444",
+          fontSize:13,fontWeight:700,pointerEvents:"none"}}>
+          {bildi==="ok"?"✓ Kaydedildi":"✗ Hata"}
+        </div>
+      )}
+
+      {/* Header */}
+      <div style={{background:"linear-gradient(90deg,#1e40af,#0ea5e9)",padding:"24px 20px 18px"}}>
+        <div style={{maxWidth:500,margin:"0 auto"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <div style={{fontSize:10,letterSpacing:3,textTransform:"uppercase",opacity:.7,marginBottom:3}}>Mesai Takip</div>
+              <div style={{fontSize:21,fontWeight:800}}>Maaş &amp; Mesai</div>
+            </div>
+            <button onClick={()=>setAyarAc(true)} style={{background:"#ffffff20",border:"1px solid #ffffff35",color:"#fff",borderRadius:12,padding:"9px 16px",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:4}}>
+              ⚙️ Ayarlar
+            </button>
+          </div>
+          <div style={{marginTop:12,display:"flex",gap:18,flexWrap:"wrap"}}>
+            {[["Maaş",fmt(MAAS)+" ₺"],["Günlük",fmt(GUNLUK_MAAS)+" ₺"],["Saatlik",fmt(SAATLIK_UCRET)+" ₺"]].map(([l,v])=>(
+              <div key={l}><div style={{fontSize:10,opacity:.65}}>{l}</div><div style={{fontSize:16,fontWeight:700}}>{v}</div></div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{maxWidth:500,margin:"0 auto",padding:"0 14px"}}>
+
+        {/* Renk açıklaması */}
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",margin:"14px 0 12px",padding:"10px 14px",background:"#1e293b",borderRadius:12,border:"1px solid #334155"}}>
+          {[{r:"#fbbf24",l:"≤2s %50"},{r:"#f97316",l:"2-4s %50"},{r:"#22c55e",l:"≥4s %50"},{r:"#ef4444",l:"Paz/Tatil"},{r:"#64748b",l:"İzin"}].map(({r,l})=>(
+            <div key={l} style={{display:"flex",alignItems:"center",gap:5}}>
+              <div style={{width:10,height:10,borderRadius:3,background:r,flexShrink:0}}/>
+              <span style={{fontSize:10,color:"#64748b"}}>{l}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Ay navigasyon */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <button onClick={()=>ayGec(-1)} style={navBtn}>&#8592;</button>
+          <span style={{fontSize:18,fontWeight:700}}>{ayAdi}</span>
+          <button onClick={()=>ayGec(1)} style={navBtn}>&#8594;</button>
+        </div>
+
+        {/* Gün başlıkları */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
+          {["Pzt","Sal","Çar","Per","Cum","Cmt","Paz"].map((g,i)=>(
+            <div key={g} style={{textAlign:"center",fontSize:10,fontWeight:700,padding:"3px 0",color:i===6?"#ef4444":i===5?"#94a3b8":"#475569"}}>{g}</div>
+          ))}
+        </div>
+
+        {/* Takvim */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+          {Array.from({length:startOffset}).map((_,i)=><div key={"e"+i}/>)}
+          {Array.from({length:daysInMonth}).map((_,i)=>{
+            const day=i+1,k=gk(day),kayit=gunler[k];
+            const bugun=k===todayKey;
+            const pazar=isPazar(year,month,day);
+            const cmt=isCumartesi(year,month,day);
+            const tatil=isResmiTatil(year,month,day);
+            const ozelGun=pazar||tatil;
+            const gh=hesap.gh[k];
+            const calismadi=kayit?.tip==="calismadam";
+            const renk=kayit&&!calismadi?otoRenk(kayit.tip,kayit.saat):null;
+            const aktif=secili===day;
+
+            return(
+              <div key={day} onClick={()=>gunAc(day)}
+                style={{borderRadius:9,padding:"6px 2px 5px",minHeight:64,
+                  background:aktif?`${renk||"#38bdf8"}33`:calismadi?"#1e293b":renk?`${renk}20`:ozelGun?"#ef444408":cmt?"#1e293b":"#0f172a",
+                  border:aktif?`2px solid ${renk||"#38bdf8"}`:bugun?"2px solid #38bdf8":calismadi?"1.5px dashed #475569":renk?`1.5px solid ${renk}aa`:ozelGun?"1px solid #ef444430":"1.5px solid #334155",
+                  cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",
+                  opacity:calismadi?0.55:1,userSelect:"none",
+                  boxShadow:aktif?`0 0 12px ${renk||"#38bdf8"}44`:"none"}}>
+                <span style={{fontSize:12,fontWeight:aktif||bugun?800:600,
+                  color:aktif?(renk||"#38bdf8"):bugun?"#38bdf8":calismadi?"#64748b":ozelGun?"#ef4444":cmt?"#94a3b8":"#e2e8f0",
+                  textDecoration:calismadi?"line-through":"none"}}>{day}</span>
+                {!kayit&&tatil&&<span style={{fontSize:7,color:"#ef4444",fontWeight:700,marginTop:1}}>Tatil</span>}
+                {!kayit&&pazar&&!tatil&&<span style={{fontSize:7,color:"#ef444460",marginTop:1}}>Paz</span>}
+                {calismadi&&<>
+                  <span style={{fontSize:8,color:"#64748b",marginTop:2,fontWeight:700}}>İzin</span>
+                  {hesap.buffer>0&&hesap.cGun<=hesap.buffer
+                    ?<span style={{fontSize:7,color:"#4ade80",fontWeight:700}}>-0₺</span>
+                    :<span style={{fontSize:8,color:"#ef4444",fontWeight:700}}>-{fmt(GUNLUK_MAAS).split(",")[0]}₺</span>}
+                </>}
+                {kayit&&!calismadi&&<>
+                  <span style={{fontSize:8,fontWeight:700,color:renk,marginTop:2}}>{kayit.tip==="yuzde50"?"%50":"%100"}</span>
+                  <span style={{fontSize:8,color:"#94a3b8"}}>{kayit.saat}s</span>
+                  {gh&&<span style={{fontSize:8,color:renk,fontWeight:700}}>+{fmt(gh.ucret).split(",")[0]}₺</span>}
+                </>}
+                {kayit?.not&&<span style={{fontSize:9}}>📝</span>}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── INLINE GİRİŞ FORMU ── takvimin hemen altında açılır */}
+        {secili&&(
+          <div ref={formRef} style={{marginTop:12,background:"#1e293b",border:`1.5px solid ${seciRenk}66`,borderRadius:16,padding:"18px 16px",animation:"slideDown .2s ease"}}>
+
+            {/* Başlık */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div>
+                <span style={{fontSize:16,fontWeight:800}}>{secili} {ayAdi}</span>
+                <span style={{display:"inline-block",marginLeft:8,padding:"2px 10px",borderRadius:20,fontSize:10,fontWeight:700,
+                  background:seciOzel?"#ef444422":seciCmt?"#94a3b822":"#1e40af22",
+                  color:seciOzel?"#ef4444":seciCmt?"#94a3b8":"#38bdf8",
+                  border:`1px solid ${seciOzel?"#ef444444":seciCmt?"#94a3b844":"#38bdf844"}`}}>
+                  {seciTatil?"🔴 Resmi Tatil":seciPazar?"🔴 Pazar":seciCmt?"Cmt":"Hafta içi"}
+                </span>
+              </div>
+              <button onClick={()=>setSecili(null)} style={{background:"#334155",border:"none",color:"#94a3b8",borderRadius:8,width:30,height:30,fontSize:15,cursor:"pointer",flexShrink:0}}>✕</button>
+            </div>
+
+            {/* Tip seçimi */}
+            <div style={{display:"flex",gap:8,marginBottom:14}}>
+              {Object.entries(TIPLER).map(([k,v])=>(
+                <button key={k} onClick={()=>setMTip(k)} style={{
+                  flex:1,padding:"10px 4px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",
+                  border:mTip===k?`2px solid ${v.renk}`:"1.5px solid #334155",
+                  background:mTip===k?`${v.renk}22`:"transparent",
+                  color:mTip===k?v.renk:"#64748b"}}>
+                  {v.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Not alanı — her zaman görünür */}
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:10,color:"#64748b",letterSpacing:1,marginBottom:6}}>📝 NOT</div>
+              <textarea
+                value={mNot}
+                onChange={e=>setMNot(e.target.value)}
+                placeholder={mTip==="calismadam"?"Neden gelemedin? (hastalık, izin...)":"Mesai notu ekle..."}
+                rows={2}
+                style={{width:"100%",background:"#0f172a",border:"1.5px solid #334155",
+                  color:"#e2e8f0",borderRadius:10,padding:"10px 12px",fontSize:13,
+                  resize:"none",lineHeight:1.5}}
+                onFocus={e=>e.target.style.borderColor="#38bdf8"}
+                onBlur={e=>e.target.style.borderColor="#334155"}
+              />
+            </div>
+
+            {/* Saat girişi */}
+            {mTip!=="calismadam"&&(
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:10,color:"#64748b",letterSpacing:1,marginBottom:6}}>MESAİ SAATİ</div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <button onClick={()=>{const n=Math.max(0.5,mSaat-0.5);setMSaat(n);setMSaatStr(String(n));}}
+                    style={{width:48,height:48,background:"#0f172a",border:"1.5px solid #334155",color:"#e2e8f0",borderRadius:12,fontSize:22,cursor:"pointer",fontWeight:700,flexShrink:0}}>−</button>
+                  <input
+                    type="number"
+                    value={mSaatStr}
+                    onChange={e=>saatDegis(e.target.value)}
+                    onBlur={saatBlur}
+                    inputMode="decimal"
+                    style={{flex:1,background:"#0f172a",border:`2px solid ${seciRenk}88`,
+                      color:seciRenk,borderRadius:12,padding:"10px 8px",
+                      fontSize:26,fontWeight:900,textAlign:"center",width:"100%"}}
+                  />
+                  <button onClick={()=>{const n=Math.min(24,mSaat+0.5);setMSaat(n);setMSaatStr(String(n));}}
+                    style={{width:48,height:48,background:"#0f172a",border:"1.5px solid #334155",color:"#e2e8f0",borderRadius:12,fontSize:22,cursor:"pointer",fontWeight:700,flexShrink:0}}>+</button>
+                </div>
+                {/* Önizleme */}
+                <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:`${seciRenk}15`,border:`1px solid ${seciRenk}33`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:11,color:"#64748b"}}>Tahmini kazanç</span>
+                  <span style={{fontSize:18,fontWeight:900,color:seciRenk}}>+{fmt(tahmini)} ₺</span>
+                </div>
+              </div>
+            )}
+
+            {/* Yevmiye uyarısı */}
+            {mTip==="calismadam"&&(
+              <div style={{marginBottom:14,padding:"12px",borderRadius:10,background:"#ef444411",border:"1px solid #ef444433"}}>
+                <div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>Yevmiye Durumu</div>
+                {hesap.buffer>0&&hesap.cGun<hesap.buffer
+                  ?<div style={{fontSize:15,fontWeight:900,color:"#4ade80",marginTop:4}}>Kesilmez ✓ — 31 günlük ay</div>
+                  :<div style={{fontSize:18,fontWeight:900,color:"#ef4444",marginTop:4}}>− {fmt(GUNLUK_MAAS)} ₺</div>}
+              </div>
+            )}
+
+            {/* Butonlar */}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={kaydet}
+                style={{flex:1,padding:"13px",borderRadius:12,
+                  background:mTip==="calismadam"?"#475569":`linear-gradient(90deg,${seciRenk}cc,${seciRenk})`,
+                  color:"#fff",fontWeight:800,fontSize:15,border:"none",cursor:"pointer"}}>
+                Kaydet
+              </button>
+              {gunler[gk(secili)]&&(
+                <button onClick={silGun}
+                  style={{padding:"13px 16px",borderRadius:12,background:"#ef444422",color:"#ef4444",fontWeight:700,fontSize:13,border:"1.5px solid #ef444444",cursor:"pointer"}}>
+                  Sil
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Özet kartlar */}
+        <div style={{marginTop:16,display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          {[{b:"%50 Mesai",saat:hesap.y50s,ucret:hesap.y50u,renk:"#f59e0b"},{b:"%100 Mesai",saat:hesap.y100s,ucret:hesap.y100u,renk:"#ef4444"}].map(({b,saat,ucret,renk})=>(
+            <div key={b} style={{background:`${renk}11`,border:`1.5px solid ${renk}44`,borderRadius:12,padding:"14px 16px"}}>
+              <div style={{fontSize:10,color:renk,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>{b}</div>
+              <div style={{fontSize:19,fontWeight:900}}>{fmt(ucret)} ₺</div>
+              <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{saat} saat</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Toplam */}
+        <div style={{marginTop:12,background:"linear-gradient(135deg,#1e40af22,#0ea5e922)",border:"1.5px solid #0ea5e944",borderRadius:14,padding:"16px 18px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+            <div>
+              <div style={{fontSize:10,opacity:.6,letterSpacing:1,textTransform:"uppercase"}}>Toplam Hak Ediş</div>
+              <div style={{fontSize:12,color:"#94a3b8",marginTop:5,lineHeight:2}}>
+                {fmt(MAAS)} ₺ maaş<br/>
+                {hesap.toplamMesai>0&&<span style={{color:"#38bdf8"}}>+ {fmt(hesap.toplamMesai)} ₺ mesai<br/></span>}
+                {hesap.cGun>0&&hesap.buffer>0&&hesap.netDevamsiz===0
+                  ?<span style={{color:"#4ade80"}}>ℹ️ {hesap.cGun} gün izin — kesilmez<br/></span>
+                  :hesap.dus>0&&<span style={{color:"#ef4444"}}>− {fmt(hesap.dus)} ₺ ({hesap.netDevamsiz} gün izin)<br/></span>}
+              </div>
+            </div>
+            <div style={{fontSize:26,fontWeight:900,color:"#38bdf8"}}>{fmt(hakEdis)} ₺</div>
+          </div>
+        </div>
+
+        {/* Limit barlar */}
+        <div style={{marginTop:12,display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          {[{label:"%50",kul:hesap.y50s,lim:ayarlar.limit50,renk:"#f59e0b"},{label:"%100",kul:hesap.y100s,lim:ayarlar.limit100,renk:"#ef4444"}].map(({label,kul,lim,renk})=>{
+            const yp=Math.min(100,(kul/lim)*100);
+            return(
+              <div key={label} style={{background:"#1e293b",border:"1.5px solid #334155",borderRadius:12,padding:"12px 14px"}}>
+                <div style={{fontSize:10,color:"#64748b",marginBottom:6}}>{label} Mesai Limiti</div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:5}}>
+                  <span style={{color:renk,fontWeight:700}}>{kul}s</span>
+                  <span style={{color:"#475569"}}>/ {lim}s</span>
+                </div>
+                <div style={{background:"#0f172a",borderRadius:99,height:6,overflow:"hidden"}}>
+                  <div style={{width:`${yp}%`,background:renk,height:"100%",borderRadius:99,transition:"width .4s"}}/>
+                </div>
+                <div style={{fontSize:10,color:"#475569",marginTop:4}}>{lim-kul>0?`${(lim-kul).toFixed(1)}s kaldı`:"Limit doldu"}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Yedekleme */}
+        <div style={{marginTop:14,background:"#1e293b",border:"1.5px solid #334155",borderRadius:14,padding:"14px",marginBottom:20}}>
+          <div style={{fontSize:10,color:"#64748b",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Veri Yedekleme</div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={disaAktar} style={{flex:1,padding:"12px",borderRadius:10,background:"#0ea5e922",border:"1.5px solid #0ea5e966",color:"#38bdf8",fontWeight:800,fontSize:13,cursor:"pointer"}}>⬇ Yedek Al</button>
+            <label style={{flex:1,padding:"12px",borderRadius:10,background:"#16a34a22",border:"1.5px solid #16a34a66",color:"#4ade80",fontWeight:800,fontSize:13,cursor:"pointer",textAlign:"center"}}>
+              ⬆ Yedeği Yükle
+              <input type="file" accept=".json" onChange={iceAktar} style={{display:"none"}}/>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
